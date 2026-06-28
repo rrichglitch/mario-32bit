@@ -14,10 +14,19 @@ const ctx    = canvas.getContext('2d');
 const W = canvas.width, H = canvas.height;
 ctx.imageSmoothingEnabled = true;
 
-// logical ground level (top of grass)
-const GROUND_Y = H - 80;
+// logical ground level (top of grass) — this is where physics ground sits
+const GROUND_Y = H - 80;     // y=460 (top of grass strip)
 const GRAVITY  = 2000;        // px / s^2
 const MAX_FALL = 700;
+
+// Tile grid: ROWS rows × TILE px each. The TOP of the bottom row (row ROWS-1)
+// must sit exactly on top of the visual ground (GROUND_Y), so that physics
+// collisions make entities stand on the grass line.
+const TILE = 40;
+const ROWS = 8;
+const COLS = 220;
+const GRID_OFFSET_Y = GROUND_Y - (ROWS - 1) * TILE;   // y of the TOP of row 0
+const GRID_OFFSET_X = 0;
 
 // ---------- input ----------
 const keys = Object.create(null);
@@ -101,9 +110,7 @@ function softShadow(x,y,w,h,r=8) {
 // ---------- level (procedural classic 1-1) ----------
 // tile types: '.' empty, 'G' ground, 'B' brick, '?' question, '|' pipe-top, '=' pipe-body, 'X' hard block
 // height rows: row 0 is top of world, row 7 is ground row
-const ROWS = 8;
-const COLS = 220;
-const TILE = 40;
+// (TILE, ROWS, COLS, GRID_OFFSET_Y are declared above)
 
 function buildLevel() {
   const grid = [];
@@ -122,8 +129,9 @@ function buildLevel() {
   ]);
   for (let c=0; c<COLS; c++) {
     if (gaps.has(c)) continue;
+    // Only the bottom row is physics ground. The grass strip is drawn
+    // on top of this row visually.
     grid[ROWS-1][c] = 'G';
-    grid[ROWS-2][c] = 'G';
   }
 
   // pipe segments
@@ -206,7 +214,7 @@ const bumpTiles  = [];   // {x,y,t,vy} for brick debris
 
 function spawnCoinFromQuestion(tx, ty) {
   // animated coin floating up out of the block
-  const wx = tx*TILE, wy = ty*TILE;
+  const wx = tx*TILE, wy = ty*TILE + GRID_OFFSET_Y;
   coins.push({ x: wx+10, y: wy-10, w: 18, h: 18, collected:false, floating:true, vy:-200, life:0.6 });
 }
 
@@ -280,7 +288,7 @@ function gameOver(win) {
 
 // ---------- physics & collision ----------
 function tilePxRect(c, r) {
-  return { x: c*TILE, y: r*TILE, w: TILE, h: TILE };
+  return { x: c*TILE, y: r*TILE + GRID_OFFSET_Y, w: TILE, h: TILE };
 }
 
 function solidAt(c, r) {
@@ -295,11 +303,13 @@ function stepAxis(e, dx, dy) {
 }
 
 function collideEntityWithWorld(e) {
-  // only check tiles overlapping entity bounds
+  // only check tiles overlapping entity bounds.
+  // entity y is in canvas coordinates; tiles are offset by GRID_OFFSET_Y,
+  // so subtract the offset to convert canvas y → grid y.
   const c0 = Math.floor(e.x / TILE);
   const c1 = Math.floor((e.x + e.w - 1) / TILE);
-  const r0 = Math.floor(e.y / TILE);
-  const r1 = Math.floor((e.y + e.h - 1) / TILE);
+  const r0 = Math.floor((e.y - GRID_OFFSET_Y) / TILE);
+  const r1 = Math.floor((e.y + e.h - 1 - GRID_OFFSET_Y) / TILE);
   for (let r=r0; r<=r1; r++) {
     for (let c=c0; c<=c1; c++) {
       if (!solidAt(c, r)) continue;
@@ -328,7 +338,7 @@ function bumpQuestion(c, r, fromBelow=true) {
     spawnCoinFromQuestion(c, r);
     score += 200;
     if (fromBelow) bumpTiles.push({c,r,vy:-200});
-    spawnSparkle(c*TILE + TILE/2, r*TILE, 6);
+    spawnSparkle(c*TILE + TILE/2, r*TILE + GRID_OFFSET_Y, 6);
   } else if (t === 'B' && fromBelow) {
     bumpTiles.push({c,r,vy:-260});
     if (player.big) {
@@ -342,7 +352,7 @@ function bumpQuestion(c, r, fromBelow=true) {
 }
 
 function spawnBrickShards(c, r) {
-  const wx = c*TILE, wy = r*TILE;
+  const wx = c*TILE, wy = r*TILE + GRID_OFFSET_Y;
   for (let i=0;i<4;i++) {
     particles.push({
       x: wx + 8 + (i%2)*16, y: wy + 8 + Math.floor(i/2)*16,
@@ -659,7 +669,7 @@ function drawTiles() {
     for (let c=c0; c<=c1; c++) {
       const t = tileAt(c, r);
       if (!t || t === '.') continue;
-      const wx = c*TILE, wy = r*TILE;
+      const wx = c*TILE, wy = r*TILE + GRID_OFFSET_Y;
       if (t === 'G') continue; // drawn as ground
       if (t === 'F') continue; // drawn separately
       const ox = wx - camera.x;
@@ -765,7 +775,8 @@ function drawPipe(x, y, kind) {
 
 function drawFlag() {
   const c = 218;
-  const wx = c*TILE + TILE/2;
+  const wx = c*TILE + TILE/2 - camera.x;   // screen-space x
+  if (wx < -50 || wx > W + 50) return;      // cull
   // pole
   ctx.fillStyle = '#dddddd';
   ctx.fillRect(wx - 3, 0, 6, H);
@@ -775,17 +786,20 @@ function drawFlag() {
   ctx.fillStyle = g;
   ctx.beginPath(); ctx.arc(wx, 14, 10, 0, Math.PI*2); ctx.fill();
   // flag cloth
-  const fy = GROUND_Y - 5*TILE;
+  const fy = GROUND_Y - 7*TILE;   // near the top of the visible pole
   ctx.fillStyle = '#e52521';
   ctx.beginPath();
   ctx.moveTo(wx + 4, fy);
-  ctx.lineTo(wx + 4 + 28, fy + 10);
-  ctx.lineTo(wx + 4 + 16, fy + 20);
-  ctx.lineTo(wx + 4 + 28, fy + 30);
-  ctx.lineTo(wx + 4, fy + 40);
+  ctx.lineTo(wx + 4 + 36, fy + 12);
+  ctx.lineTo(wx + 4 + 20, fy + 24);
+  ctx.lineTo(wx + 4 + 36, fy + 36);
+  ctx.lineTo(wx + 4, fy + 48);
   ctx.closePath(); ctx.fill();
   ctx.fillStyle = 'rgba(0,0,0,0.25)';
-  ctx.fillRect(wx+4, fy+2, 4, 38);
+  ctx.fillRect(wx+4, fy+2, 5, 46);
+  // highlight on left
+  ctx.fillStyle = 'rgba(255,255,255,0.25)';
+  ctx.fillRect(wx+5, fy+2, 2, 46);
 }
 
 function drawCoin(x, y) {
