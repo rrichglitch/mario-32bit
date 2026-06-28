@@ -29,23 +29,28 @@ html, body {
 
 #hud {
   width: min(960px, 100%);
-  display: grid;
-  grid-template-columns: auto auto auto auto auto auto auto auto auto;
-  align-items: center; justify-items: start;
-  gap: 6px 12px;
-  padding: 6px 12px;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 10px;
   background: var(--hud-bg);
   color: var(--hud-fg);
   border-radius: 6px;
   font-family: "Courier New", monospace;
   font-weight: 700;
-  letter-spacing: 1px;
+  letter-spacing: 0.5px;
   box-shadow: 0 4px 18px rgba(0,0,0,.5);
-  font-size: 12px;
+  font-size: 11px;
   flex-shrink: 0;
+  overflow: hidden;
+  white-space: nowrap;
 }
-.hud-label { color: #cfd2da; font-size: 11px; text-transform: uppercase; }
-.hud-val   { color: #fff;     font-size: 16px; }
+.hud-label { color: #cfd2da; font-size: 10px; text-transform: uppercase; flex-shrink: 0; }
+.hud-val   { color: #fff;     font-size: 14px; min-width: 2.4ch; text-align: left; }
+.hud-val#score { min-width: 4.5ch; }
+.hud-val#world { min-width: 2.5ch; }
+.hud-val#time  { min-width: 3ch; }
 .coin      { color: var(--accent); }
 
 #stage {
@@ -161,15 +166,23 @@ html, body {
 /* Portrait mode hint */
 #rotate-hint {
   display: none;
-  position: absolute; top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
+  position: absolute; top: 12px; left: 50%;
+  transform: translateX(-50%);
   background: rgba(0,0,0,.7); color: #ffe600;
-  padding: 12px 18px; border-radius: 8px;
-  font-weight: 700; font-size: 14px;
+  padding: 6px 12px; border-radius: 999px;
+  font-weight: 600; font-size: 11px;
   text-align: center;
   z-index: 6;
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: pointer;
   border: 1px solid rgba(255,255,255,.2);
+  opacity: 0.85;
+  user-select: none;
+  -webkit-user-select: none;
+}
+#rotate-hint.fade { animation: hint-fade 0.5s forwards; }
+@keyframes hint-fade {
+  to { opacity: 0; transform: translateX(-50%) translateY(-10px); }
 }
 @media (orientation: portrait) and (max-width: 600px) {
   #rotate-hint { display: block; }

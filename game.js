@@ -211,7 +211,7 @@ function spawnCoinFromQuestion(tx, ty) {
 }
 
 function spawnEnemyAt(cx, cy, type='goomba') {
-  enemies.push({ x: cx, y: cy, w: 32, h: 32, vx:-60, type, dead:false, deadTimer:0, stomped:false, walkAnim:0 });
+  enemies.push({ x: cx, y: cy, w: 32, h: 32, vx:-60, vy: 0, type, dead:false, deadTimer:0, stomped:false, walkAnim:0 });
 }
 
 // initial coins + goombas
@@ -237,6 +237,13 @@ const ovTitle = document.getElementById('ovTitle');
 const ovSub   = document.getElementById('ovSub');
 const ovHint  = document.getElementById('ovHint');
 document.getElementById('startBtn').addEventListener('click', startGame);
+// tap-to-dismiss the rotation hint
+const rh = document.getElementById('rotate-hint');
+if (rh) {
+  const dismiss = e => { e.preventDefault(); rh.classList.add('fade'); };
+  rh.addEventListener('click', dismiss);
+  rh.addEventListener('touchstart', dismiss, {passive:false});
+}
 
 function startGame() {
   // reset everything
@@ -249,6 +256,9 @@ function startGame() {
   camera.x = 0;
   state = 'playing';
   overlay.classList.remove('show');
+  // dismiss the rotation hint if it's still up
+  const rh = document.getElementById('rotate-hint');
+  if (rh) rh.classList.add('fade');
   canvas.focus();
 }
 
@@ -355,10 +365,11 @@ function spawnSparkle(x, y, n=4) {
 // ---------- update ----------
 let last = performance.now();
 function loop(now) {
-  const dt = Math.min(0.033, (now - last) / 1000);
+  const dt = Math.max(0, Math.min(0.033, (now - last) / 1000));
   last = now;
   if (state === 'playing') update(dt);
-  render(dt);
+  try { render(dt); }
+  catch (e) { console.error('Render error:', e.message); }
   pressed = Object.create(null);
   requestAnimationFrame(loop);
 }
@@ -430,6 +441,10 @@ function update(dt) {
     en.y += en.vy * dt;
     collideEntityWithWorld(en);
     if (en._landed) en.vy = 0;
+    // safety: if the entity ended up with non-finite coords, kill it
+    if (!Number.isFinite(en.x) || !Number.isFinite(en.y) || !Number.isFinite(en.vx) || !Number.isFinite(en.vy)) {
+      en.dead = true; en.deadTimer = 99;
+    }
 
     // interaction with player
     if (!player.dead && !en.dead && aabb(player, en)) {
@@ -787,6 +802,7 @@ function drawCoin(x, y) {
 
 function drawGoomba(e) {
   const x = e.x - camera.x, y = e.y;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return; // safety
   if (e.dead) { drawGoombaSplat(x, y); return; }
   softShadow(x+2, y+24, 32, 6, 6);
   // body
