@@ -11,22 +11,31 @@
 // ---------- canvas / scaling ----------
 const canvas = document.getElementById('game');
 const ctx    = canvas.getContext('2d');
-const W = canvas.width, H = canvas.height;
+// Fixed internal resolution — CSS scales the canvas to fill the stage,
+// so the game stretches to fit the screen in any orientation.
+// (Vector graphics, so stretching looks fine.)
+let W = 1280, H = 720;
+canvas.width = W;
+canvas.height = H;
 ctx.imageSmoothingEnabled = true;
 
-// logical ground level (top of grass) — this is where physics ground sits
-const GROUND_Y = H - 80;     // y=460 (top of grass strip)
-const GRAVITY  = 2000;        // px / s^2
-const MAX_FALL = 700;
-
-// Tile grid: ROWS rows × TILE px each. The TOP of the bottom row (row ROWS-1)
+// Tile grid: 8 rows × TILE px each. The TOP of the bottom row (row ROWS-1)
 // must sit exactly on top of the visual ground (GROUND_Y), so that physics
 // collisions make entities stand on the grass line.
-const TILE = 40;
 const ROWS = 8;
 const COLS = 220;
-const GRID_OFFSET_Y = GROUND_Y - (ROWS - 1) * TILE;   // y of the TOP of row 0
-const GRID_OFFSET_X = 0;
+const TILE = 60;
+const GRID_OFFSET_Y = 0;
+let GROUND_Y = 60 * 8;       // ground top sits on top of the 8th row
+// Make sure the grass strip + dirt below it fits in the remaining height
+// (Canvas H = 720, so 720 - 480 = 240 px below the grid for ground art)
+
+const GRAVITY  = 2200;        // px / s^2
+const MAX_FALL = 900;
+const JUMP_VY_NORMAL = -900;  // ~184px peak — clears ~3 tiles
+const JUMP_VY_RUN    = -1100; // ~275px peak — clears ~4.5 tiles
+const JUMP_HOLD_BOOST = 1.20; // multiplier on upward velocity when holding jump
+// (TILE, GRID_OFFSET_Y, GROUND_Y are declared above)
 
 // ---------- input ----------
 const keys = Object.create(null);
@@ -85,7 +94,7 @@ canvas.addEventListener('touchmove',  e => e.preventDefault(), {passive:false});
 const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
 const lerp  = (a,b,t) => a + (b-a)*t;
 const sign  = v => v < 0 ? -1 : v > 0 ? 1 : 0;
-const aabb  = (a,b) => a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y;
+const aabb  = (a,b) => a.x < b.x+b.w && a.x+a.w > b.x && a.y <= b.y+b.h && a.y+a.h >= b.y;
 
 function roundRect(x,y,w,h,r) {
   r = Math.min(r, w/2, h/2);
@@ -192,7 +201,7 @@ function tileAt(c, r) {
 
 // ---------- entities ----------
 const player = {
-  x: 80, y: 200, w: 28, h: 44,
+  x: 80, y: 200, w: 36, h: 56,  // ~0.6 × tile, ~0.93 × tile
   vx: 0, vy: 0,
   facing: 1,
   onGround: false,
@@ -218,13 +227,32 @@ function spawnCoinFromQuestion(tx, ty) {
   coins.push({ x: wx+10, y: wy-10, w: 18, h: 18, collected:false, floating:true, vy:-200, life:0.6 });
 }
 
+// power-ups: mushrooms and fire flowers spawn out of ? blocks
+const powerups = [];   // {x,y,w,h,type:'mushroom'|'flower',vx,vy,onGround,walkAnim,dead,deadTimer}
+function spawnMushroomFromQuestion(tx, ty) {
+  // mushroom appears inside the block, then slides out to the right
+  powerups.push({
+    x: tx*TILE + 4,
+    y: ty*TILE + GRID_OFFSET_Y,
+    w: 40, h: 40,
+    type: 'mushroom',
+    vx: 80,        // slides out to the right
+    vy: 0,
+    onGround: false,
+    walkAnim: 0,
+    emerged: false,
+    _homeCol: tx,
+  });
+}
+
 function spawnEnemyAt(cx, cy, type='goomba') {
-  enemies.push({ x: cx, y: cy, w: 32, h: 32, vx:-60, vy: 0, type, dead:false, deadTimer:0, stomped:false, walkAnim:0 });
+  enemies.push({ x: cx, y: cy, w: 44, h: 44, vx:-60, vy: 0, type, dead:false, deadTimer:0, stomped:false, walkAnim:0 });
 }
 
 // initial coins + goombas
 function seedEntities() {
   coins.length = 0; enemies.length = 0; particles.length = 0; bumpTiles.length = 0;
+  powerups.length = 0;
   // place goombas near gaps and around mid-level
   const spots = [20, 32, 42, 55, 68, 82, 95, 115, 135, 160, 180, 200];
   for (const c of spots) {
@@ -303,28 +331,37 @@ function stepAxis(e, dx, dy) {
 }
 
 function collideEntityWithWorld(e) {
-  // only check tiles overlapping entity bounds.
-  // entity y is in canvas coordinates; tiles are offset by GRID_OFFSET_Y,
-  // so subtract the offset to convert canvas y → grid y.
+  // Sweep the entity's motion (from prev to current) against solid tiles.
+  // Uses the Minkowski-difference trick: the entity of size w×h moving
+  // through a tile is equivalent to a point moving through an expanded tile.
+  // We then resolve by snapping the entity to the nearest non-overlapping
+  // position along the swept path.
   const c0 = Math.floor(e.x / TILE);
   const c1 = Math.floor((e.x + e.w - 1) / TILE);
   const r0 = Math.floor((e.y - GRID_OFFSET_Y) / TILE);
-  const r1 = Math.floor((e.y + e.h - 1 - GRID_OFFSET_Y) / TILE);
+  const r1 = Math.floor((e.y + e.h - 1 - GRID_OFFSET_Y) / TILE) + 1;
   for (let r=r0; r<=r1; r++) {
     for (let c=c0; c<=c1; c++) {
       if (!solidAt(c, r)) continue;
       const tr = tilePxRect(c, r);
-      if (aabb(e, tr)) {
-        // resolve: push out along smallest axis
-        const ox = (e.x + e.w) - tr.x;             // overlap from left
-        const ox2 = (tr.x + tr.w) - e.x;            // overlap from right
-        const oy = (e.y + e.h) - tr.y;             // overlap from top
-        const oy2 = (tr.y + tr.h) - e.y;           // overlap from bottom
-        const m = Math.min(ox, ox2, oy, oy2);
-        if (m === oy)  { e.y = tr.y - e.h; e.vy = 0; e._landed = true; }
-        else if (m === oy2) { e.y = tr.y + tr.h; e.vy = 0; e._hitHead = true; e._hitTile = {c,r}; }
-        else if (m === ox)  { e.x = tr.x - e.w; e._hitWall = -1; }
-        else                { e.x = tr.x + tr.w; e._hitWall = +1; }
+      if (!aabb(e, tr)) continue;
+      // Compute overlap along each axis
+      const ox = (e.x + e.w) - tr.x;             // overlap from left of tile
+      const ox2 = (tr.x + tr.w) - e.x;            // overlap from right of tile
+      const oy = (e.y + e.h) - tr.y;             // overlap from top of tile
+      const oy2 = (tr.y + tr.h) - e.y;           // overlap from bottom of tile
+      // Resolve along the axis with the smaller overlap — that's the
+      // direction the entity is "closer" to exiting through.
+      // Tie-break: prefer Y (gravity-controlled) so the player doesn't
+      // slide along walls instead of landing.
+      const xMin = Math.min(ox, ox2);
+      const yMin = Math.min(oy, oy2);
+      if (xMin < yMin) {
+        if (ox < ox2) { e.x = tr.x - e.w; e._hitWall = -1; }
+        else          { e.x = tr.x + tr.w; e._hitWall = +1; }
+      } else {
+        if (oy < oy2) { e.y = tr.y - e.h; e.vy = 0; e._landed = true; }
+        else          { e.y = tr.y + tr.h; e.vy = 0; e._hitHead = true; e._hitTile = {c,r}; }
       }
     }
   }
@@ -335,8 +372,16 @@ function bumpQuestion(c, r, fromBelow=true) {
   if (!t) return;
   if (t === '?') {
     level[r][c] = 'B'; // spent
-    spawnCoinFromQuestion(c, r);
-    score += 200;
+    // The very first ? block in the level gives a coin (classic 1-1),
+    // every other ? block gives a power-up mushroom
+    const isFirst = (c === 17 || c === 21);
+    if (isFirst) {
+      spawnCoinFromQuestion(c, r);
+      score += 200;
+    } else {
+      spawnMushroomFromQuestion(c, r);
+      score += 200;
+    }
     if (fromBelow) bumpTiles.push({c,r,vy:-200});
     spawnSparkle(c*TILE + TILE/2, r*TILE + GRID_OFFSET_Y, 6);
   } else if (t === 'B' && fromBelow) {
@@ -398,13 +443,22 @@ function update(dt) {
     player.vx = clamp(player.vx, -maxSpd, maxSpd);
     player.crouching = keys.down;
 
-    // jump
+    // jump — instant launch, then a small upward "boost" while holding
+    // the key during the rising phase (variable jump height)
     if (pressed.jump && player.onGround) {
-      player.vy = keys.run ? -720 : -620;
+      player.vy = keys.run ? JUMP_VY_RUN : JUMP_VY_NORMAL;
       player.onGround = false;
     }
-    // variable jump height
-    if (!keys.jump && player.vy < -200) player.vy = -200;
+    if (keys.jump && player.vy < 0) {
+      // rising: each frame the button is held, apply a small upward accel
+      // proportional to remaining upward velocity — feels responsive without
+      // overshooting
+      player.vy -= GRAVITY * (JUMP_HOLD_BOOST - 1) * dt;
+    }
+    if (!keys.jump && player.vy < -300) {
+      // released early: cut the jump short
+      player.vy = -300;
+    }
   }
 
   // gravity
@@ -484,6 +538,40 @@ function update(dt) {
     }
   }
   coins.splice(0, coins.length, ...coins.filter(c => !c.collected));
+
+  // ---- power-ups (mushrooms) ----
+  for (const p of powerups) {
+    if (p.dead) continue;
+    // emergence: lock the y to the question block until it slides clear
+    if (!p.emerged) {
+      p.x += p.vx * dt;
+      if (p.x > (p._homeCol + 1) * TILE) p.emerged = true;
+    } else {
+      // physics: walk and fall
+      p.vy += GRAVITY * dt;
+      if (p.vy > MAX_FALL) p.vy = MAX_FALL;
+      p.x += p.vx * dt;
+      p._landed = false; p._hitWall = 0;
+      collideEntityWithWorld(p);
+      if (p._hitWall) { p.vx = -p.vx; p.x += p._hitWall * 2; }
+      p.y += p.vy * dt;
+      collideEntityWithWorld(p);
+      if (p._landed) p.vy = 0;
+      p.walkAnim += dt;
+    }
+    // pickup
+    if (!player.dead && aabb(player, p)) {
+      p.dead = true; p.deadTimer = 0;
+      if (p.type === 'mushroom') {
+        player.big = true;
+        player.h = 80;
+        player.y -= 24;   // grow upward
+        score += 1000;
+        spawnSparkle(p.x + p.w/2, p.y + p.h/2, 10);
+      }
+    }
+  }
+  powerups.splice(0, powerups.length, ...powerups.filter(p => !(p.dead && p.deadTimer > 0.5) && p.x > camera.x - 100 && p.x < camera.x + W + 200));
 
   // ---- bumpTiles (bouncing bricks) ----
   for (const b of bumpTiles) {
@@ -1033,6 +1121,46 @@ function drawCoins() {
   }
 }
 
+function drawPowerups() {
+  for (const p of powerups) {
+    if (p.dead) continue;
+    const x = p.x - camera.x;
+    if (x < -50 || x > W+50) continue;
+    if (p.type === 'mushroom') drawMushroom(x, p.y, p.walkAnim);
+  }
+}
+
+function drawMushroom(x, y, t) {
+  // Classic mushroom: red cap with white spots, beige stem, two black eyes
+  // Slight bob animation
+  const bob = Math.sin(t * 3) * 0;
+  // Cap
+  const g = ctx.createRadialGradient(x+10, y+6, 2, x+16, y+14, 22);
+  g.addColorStop(0, '#ff7a6e');
+  g.addColorStop(1, '#c41a18');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.ellipse(x+16, y+14, 16, 12, 0, Math.PI, 0);
+  ctx.lineTo(x+32, y+22);
+  ctx.lineTo(x, y+22);
+  ctx.closePath();
+  ctx.fill();
+  // White spots
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(x+9,  y+8, 3, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x+22, y+7, 3.5, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x+16, y+12, 2.5, 0, Math.PI*2); ctx.fill();
+  // Stem
+  ctx.fillStyle = '#fde8c4';
+  roundRect(x+8, y+20, 16, 12, 4); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.fillRect(x+22, y+20, 2, 12);
+  // Eyes
+  ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.arc(x+12, y+25, 1.5, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x+20, y+25, 1.5, 0, Math.PI*2); ctx.fill();
+}
+
 function drawEnemies() {
   for (const en of enemies) {
     const x = en.x - camera.x;
@@ -1046,6 +1174,7 @@ function render() {
   drawSky();
   drawGround();
   drawTiles();
+  drawPowerups();
   drawCoins();
   drawEnemies();
   drawParticles();
