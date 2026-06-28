@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#0a0f24" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Mario 32-Bit</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="wrap">
+    <div id="hud">
+      <span class="hud-label">MARIO</span>
+      <span class="hud-val" id="score">000000</span>
+      <span class="hud-label coin">×</span>
+      <span class="hud-val" id="coins">00</span>
+      <span class="hud-label">WORLD</span>
+      <span class="hud-val" id="world">1-1</span>
+      <span class="hud-label">TIME</span>
+      <span class="hud-val" id="time">400</span>
+      <span class="hud-label">LIVES</span>
+      <span class="hud-val" id="lives">3</span>
+    </div>
+    <div id="stage">
+      <canvas id="game" width="960" height="540" tabindex="0"></canvas>
+      <div id="overlay" class="show">
+        <div class="card">
+          <h1 id="ovTitle">SUPER MARIO 32</h1>
+          <p id="ovSub"></p>
+          <p id="ovHint" class="hint"></p>
+          <button id="startBtn">START</button>
+        </div>
+      </div>
+      <!-- Touch controls: bottom of canvas, always visible on touch devices -->
+      <div id="touch">
+        <div class="touch-group left">
+          <button class="ctrl big" data-key="ArrowLeft" aria-label="Move left">◀</button>
+          <button class="ctrl big" data-key="ArrowRight" aria-label="Move right">▶</button>
+        </div>
+        <div class="touch-group right">
+          <button class="ctrl big jump" data-key="Space" aria-label="Jump">JUMP</button>
+          <button class="ctrl big run"  data-key="KeyZ"  aria-label="Run">RUN</button>
+        </div>
+      </div>
+      <div id="rotate-hint">↻ Rotate to landscape for the best experience</div>
+    </div>
+    <p class="footer">A 32-bit styled Mario side-scroller. Smooth gradients, no pixel art — like the SNES era wanted to be.</p>
+  </div>
+  <script src="game.js"></script>
+</body>
+</html>
