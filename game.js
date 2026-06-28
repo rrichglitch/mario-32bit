@@ -24,17 +24,17 @@ ctx.imageSmoothingEnabled = true;
 // collisions make entities stand on the grass line.
 const ROWS = 8;
 const COLS = 220;
-const TILE = 60;
+const TILE = 80;             // 8 * 80 = 640 sky height, +80 ground = 720
 const GRID_OFFSET_Y = 0;
-let GROUND_Y = 60 * 8;       // ground top sits on top of the 8th row
-// Make sure the grass strip + dirt below it fits in the remaining height
-// (Canvas H = 720, so 720 - 480 = 240 px below the grid for ground art)
+let GROUND_Y = TILE * 8;     // y=640 (top of grass strip)
+// Ground art (grass + dirt) occupies the last TILE*1 = 80 px of the canvas
+// (40 grass + 40 dirt below, drawn by drawGround)
 
 const GRAVITY  = 2200;        // px / s^2
 const MAX_FALL = 900;
-const JUMP_VY_NORMAL = -900;  // ~184px peak — clears ~3 tiles
-const JUMP_VY_RUN    = -1100; // ~275px peak — clears ~4.5 tiles
-const JUMP_HOLD_BOOST = 1.20; // multiplier on upward velocity when holding jump
+const JUMP_VY_NORMAL = -1100; // ~275px peak — clears ~3.4 tiles
+const JUMP_VY_RUN    = -1500; // ~510px peak — clears 5+ tiles
+const JUMP_HOLD_BOOST = 1.18; // multiplier on upward velocity when holding jump
 // (TILE, GRID_OFFSET_Y, GROUND_Y are declared above)
 
 // ---------- input ----------
@@ -673,15 +673,16 @@ const clouds = [
   {x:1100, y:140, s:1.0}, {x:1500, y:70, s:0.8}, {x:1900, y:130, s:1.1},
   {x:2300, y:90, s:1.2}, {x:2700, y:120, s:0.9},
 ];
+// Hills: y is the peak top, h is the height down to the grass baseline.
 const hills = [
-  {x:0,    y:GROUND_Y-80, w:520, h:120, color:'#3aa055'},
-  {x:600,  y:GROUND_Y-110, w:640, h:160, color:'#2f8c45'},
-  {x:1300, y:GROUND_Y-90, w:560, h:140, color:'#3aa055'},
-  {x:2000, y:GROUND_Y-120, w:700, h:180, color:'#2f8c45'},
-  {x:2800, y:GROUND_Y-80, w:600, h:120, color:'#3aa055'},
-  {x:3500, y:GROUND_Y-100, w:700, h:160, color:'#2f8c45'},
-  {x:4300, y:GROUND_Y-90, w:560, h:140, color:'#3aa055'},
-  {x:5000, y:GROUND_Y-120, w:700, h:180, color:'#2f8c45'},
+  {x:0,    y:GROUND_Y-120, w:520, h:120, color:'#3aa055'},
+  {x:600,  y:GROUND_Y-160, w:640, h:160, color:'#2f8c45'},
+  {x:1300, y:GROUND_Y-140, w:560, h:140, color:'#3aa055'},
+  {x:2000, y:GROUND_Y-180, w:700, h:180, color:'#2f8c45'},
+  {x:2800, y:GROUND_Y-120, w:600, h:120, color:'#3aa055'},
+  {x:3500, y:GROUND_Y-160, w:700, h:160, color:'#2f8c45'},
+  {x:4300, y:GROUND_Y-140, w:560, h:140, color:'#3aa055'},
+  {x:5000, y:GROUND_Y-180, w:700, h:180, color:'#2f8c45'},
 ];
 
 function drawCloud(x,y,s) {
@@ -701,23 +702,29 @@ function drawCloud(x,y,s) {
   ctx.restore();
 }
 function drawHill(x,y,w,h,color) {
-  const g = ctx.createLinearGradient(0,y,0,y+h);
+  // Hill is a rounded mound with a flat bottom at y+h (= grass top).
+  // The shape goes from baseline, up to a peak, then back to baseline.
+  const baseline = y + h;
+  const peakX = x + w*0.5;
+  const peakY = y;
+  const g = ctx.createLinearGradient(0, peakY, 0, baseline);
   g.addColorStop(0, color);
   g.addColorStop(1, shade(color, -0.25));
   ctx.fillStyle = g;
   ctx.beginPath();
-  ctx.moveTo(x, y+h);
-  ctx.quadraticCurveTo(x + w*0.25, y-h*0.3, x + w*0.5, y);
-  ctx.quadraticCurveTo(x + w*0.75, y-h*0.3, x + w, y+h);
+  ctx.moveTo(x, baseline);
+  // left slope up to peak
+  ctx.bezierCurveTo(x + w*0.15, baseline, x + w*0.30, peakY, peakX, peakY);
+  // right slope down to baseline
+  ctx.bezierCurveTo(x + w*0.70, peakY, x + w*0.85, baseline, x + w, baseline);
   ctx.closePath(); ctx.fill();
-  // grass highlight
+  // grass highlight near the top
   ctx.fillStyle = 'rgba(255,255,255,0.18)';
   ctx.beginPath();
-  ctx.moveTo(x + w*0.15, y+h*0.2);
-  ctx.quadraticCurveTo(x + w*0.25, y-h*0.1, x + w*0.5, y+h*0.05);
-  ctx.quadraticCurveTo(x + w*0.75, y-h*0.1, x + w*0.85, y+h*0.2);
-  ctx.quadraticCurveTo(x + w*0.5, y+h*0.4, x + w*0.15, y+h*0.2);
-  ctx.fill();
+  ctx.moveTo(x + w*0.20, peakY + (baseline - peakY)*0.45);
+  ctx.bezierCurveTo(x + w*0.30, peakY + 4, x + w*0.70, peakY + 4, x + w*0.80, peakY + (baseline - peakY)*0.45);
+  ctx.bezierCurveTo(x + w*0.50, peakY + (baseline - peakY)*0.30, x + w*0.50, peakY + (baseline - peakY)*0.30, x + w*0.20, peakY + (baseline - peakY)*0.45);
+  ctx.closePath(); ctx.fill();
 }
 
 function shade(hex, amt) {
@@ -729,22 +736,23 @@ function shade(hex, amt) {
 }
 
 function drawGround() {
-  // grass strip
+  // grass strip — top 40px of the ground band
   const gy = GROUND_Y;
-  const g1 = ctx.createLinearGradient(0, gy, 0, gy+20);
+  const grassH = 40;
+  const g1 = ctx.createLinearGradient(0, gy, 0, gy+grassH);
   g1.addColorStop(0, '#4cc26b'); g1.addColorStop(1, '#1f7a36');
   ctx.fillStyle = g1;
-  ctx.fillRect(0, gy, W, 20);
-  // dirt
-  const g2 = ctx.createLinearGradient(0, gy+20, 0, H);
+  ctx.fillRect(0, gy, W, grassH);
+  // dirt — rest of the canvas below the grass
+  const g2 = ctx.createLinearGradient(0, gy+grassH, 0, H);
   g2.addColorStop(0, '#a05a2c'); g2.addColorStop(1, '#5a2f15');
   ctx.fillStyle = g2;
-  ctx.fillRect(0, gy+20, W, H - (gy+20));
+  ctx.fillRect(0, gy+grassH, W, H - (gy+grassH));
   // dirt specks
   ctx.fillStyle = 'rgba(0,0,0,0.18)';
-  for (let i=0;i<40;i++) {
+  for (let i=0;i<60;i++) {
     const px = ((i*97 + 30) % W);
-    const py = gy + 30 + ((i*53) % (H - gy - 30));
+    const py = gy + grassH + 10 + ((i*53) % (H - gy - grassH - 10));
     ctx.fillRect(px, py, 2, 2);
   }
 }
